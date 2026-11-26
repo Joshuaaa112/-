@@ -1,62 +1,67 @@
-const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
+import { SlashCommandBuilder, PermissionFlagsBits } from 'discord.js';
+import { successEmbed } from '../../utils/embeds.js';
+import { InteractionHelper } from '../../utils/interactionHelper.js';
+import { TitanBotError, ErrorTypes } from '../../utils/errorHandler.js';
 
-module.exports = {
-  name: 'giverole',
-  aliases: ['addrole'],
-  description: 'Give a role to a server member.',
-  data: new SlashCommandBuilder()
-    .setName('giverole')
-    .setDescription('Give a role to a server member')
-    .addUserOption((opt) =>
-      opt.setName('user').setDescription('Target member').setRequired(true)
-    )
-    .addRoleOption((opt) =>
-      opt.setName('role').setDescription('Role to assign').setRequired(true)
-    )
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles),
+export default {
+    data: new SlashCommandBuilder()
+        .setName("giverole")
+        .setDescription("Give a role to a server member")
+        .addUserOption((option) =>
+            option
+                .setName("target")
+                .setDescription("The user to give the role to")
+                .setRequired(true),
+        )
+        .addRoleOption((option) =>
+            option
+                .setName("role")
+                .setDescription("The role to give")
+                .setRequired(true),
+        )
+        .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles),
+    category: "moderation",
 
-  async runPrefix(message, args) {
-    if (!message.guild) return;
+    async execute(interaction, config, client) {
+        const targetUser = interaction.options.getUser("target");
+        const member = interaction.options.getMember("target");
+        const role = interaction.options.getRole("role");
 
-    if (!message.member.permissions.has(PermissionFlagsBits.ManageRoles)) {
-      return message.reply('You need **Manage Roles** to use this command.');
-    }
+        if (!member) {
+            throw new TitanBotError(
+                "Target not found",
+                ErrorTypes.USER_INPUT,
+                "The target user is not currently in this server.",
+                { subtype: 'user_not_found' },
+            );
+        }
 
-    const userArg = args[0];
-    const roleQuery = args.slice(1).join(' ');
-    if (!userArg || !roleQuery) {
-      return message.reply('Usage: `,giverole @user @role`');
-    }
+        if (role.id === interaction.guild.id) {
+            throw new TitanBotError(
+                "Invalid Role",
+                ErrorTypes.VALIDATION,
+                "You cannot assign the @everyone role.",
+            );
+        }
 
-    const userId = userArg.replace(/[<@!>]/g, '');
-    const member = await message.guild.members.fetch(userId).catch(() => null);
-    if (!member) {
-      return message.reply('Could not find that member.');
-    }
+        const botMember = interaction.guild.members.me;
+        if (role.position >= botMember.roles.highest.position) {
+            throw new TitanBotError(
+                "Role Hierarchy Error",
+                ErrorTypes.VALIDATION,
+                `I cannot assign **${role.name}** because it is equal to or higher than my highest role.`,
+            );
+        }
 
-    const roleId = roleQuery.replace(/[<@&>]/g, '');
-    const role =
-      message.guild.roles.cache.get(roleId) ||
-      message.guild.roles.cache.find(
-        (r) => r.name.toLowerCase() === roleQuery.toLowerCase()
-      );
+        await member.roles.add(role);
 
-    if (!role || role.id === message.guild.id) {
-      return message.reply('Could not find that role.');
-    }
-
-    const botMember = message.guild.members.me;
-    if (!botMember.permissions.has(PermissionFlagsBits.ManageRoles)) {
-      return message.reply('I am missing the **Manage Roles** permission.');
-    }
-
-    if (role.position >= botMember.roles.highest.position) {
-      return message.reply(
-        `I cannot assign **${role.name}** because it is equal to or higher than my highest role.`
-      );
-    }
-
-    await member.roles.add(role, `Assigned by ${message.author.tag} via ,giverole`);
-    await message.reply(`Added **${role.name}** to ${member.user.tag}.`);
-  },
+        await InteractionHelper.universalReply(interaction, {
+            embeds: [
+                successEmbed(
+                    `✅ **Role Added**`,
+                    `Successfully gave **${role.name}** to ${targetUser.tag}.`,
+                ),
+            ],
+        });
+    },
 };
