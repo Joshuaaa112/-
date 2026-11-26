@@ -1,36 +1,41 @@
-const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
+import { SlashCommandBuilder } from 'discord.js';
+import { successEmbed } from '../../utils/embeds.js';
+import { InteractionHelper } from '../../utils/interactionHelper.js';
 
-module.exports = {
-  name: 'roles',
-  aliases: ['rolelist'],
-  description: 'List all roles in the server or give a role to a member.',
-  data: new SlashCommandBuilder()
-    .setName('roles')
-    .setDescription('List all roles in the server'),
+export default {
+    data: new SlashCommandBuilder()
+        .setName("roles")
+        .setDescription("Display all roles in the server"),
+    category: "moderation",
 
-  async runPrefix(message) {
-    if (!message.guild) return;
+    async execute(interaction, config, client) {
+        const roles = interaction.guild.roles.cache
+            .filter((role) => role.id !== interaction.guild.id)
+            .sort((a, b) => b.position - a.position)
+            .map((role) => `${role} (\`${role.name}\`)`);
 
-    const roles = message.guild.roles.cache
-      .filter((r) => r.id !== message.guild.id)
-      .sort((a, b) => b.position - a.position)
-      .map((r) => `${r} (\`${r.name}\`)`);
+        if (!roles.length) {
+            return await InteractionHelper.universalReply(interaction, {
+                content: "There are no custom roles in this server.",
+                ephemeral: true,
+            });
+        }
 
-    if (!roles.length) {
-      return message.reply('No custom roles found in this server.');
-    }
+        const header = `**Roles in ${interaction.guild.name} (${roles.length}):**\n`;
+        let output = header;
 
-    let output = `**Roles in ${message.guild.name} (${roles.length}):**\n`;
-    for (const line of roles) {
-      if ((output + line + '\n').length > 1950) {
-        await message.channel.send(output);
-        output = '';
-      }
-      output += `${line}\n`;
-    }
+        for (const item of roles) {
+            if ((output + item + '\n').length > 1950) {
+                await interaction.channel.send(output);
+                output = '';
+            }
+            output += `${item}\n`;
+        }
 
-    if (output.trim()) {
-      await message.channel.send(output);
-    }
-  },
+        if (output.trim().length > 0) {
+            await InteractionHelper.universalReply(interaction, {
+                content: output,
+            });
+        }
+    },
 };
