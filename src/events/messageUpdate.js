@@ -2,6 +2,7 @@ import { Events } from 'discord.js';
 import { logEvent, EVENT_TYPES } from '../services/loggingService.js';
 import { logger } from '../utils/logger.js';
 import { formatLogLine } from '../utils/logging/logEmbeds.js';
+import { SnipeStore } from '../services/snipe/snipeStore.js';
 
 const MAX_LOGGED_EDIT_CONTENT_LENGTH = 512;
 
@@ -12,6 +13,12 @@ export default {
   async execute(oldMessage, newMessage) {
     try {
       if (!newMessage.guild || newMessage.author?.bot) return;
+
+      try {
+        SnipeStore.recordEdit(oldMessage, newMessage);
+      } catch (snipeError) {
+        logger.warn('Failed to record edited message in SnipeStore:', snipeError);
+      }
 
       if (oldMessage.content === newMessage.content) return;
 
