@@ -5,18 +5,48 @@ import { TitanBotError, ErrorTypes } from '../../utils/errorHandler.js';
 
 const NO_PINGS = { parse: [], roles: [], users: [] };
 
-function parseArgs(interaction) {
-    if (!interaction.args || !interaction.args.length) {
-        return { targetArg: null, roleArg: null };
+function parseRawArgs(interaction) {
+    // Check if interaction was triggered via prefix command with raw message content
+    const fullText = interaction.message?.content || interaction.content || '';
+    
+    // Remove prefix and command name (e.g., ",role " or ",giverole ")
+    const cleanText = fullText.replace(/^,\w+\s+/, '').trim();
+
+    if (!cleanText) {
+        return {
+            targetArg: interaction.args?.[0] || null,
+            roleArg: interaction.args?.slice(1).join(' ').trim() || null,
+        };
     }
 
-    // First argument is always the user (mention, ID, or raw text)
-    const targetArg = interaction.args[0];
-    
-    // Everything from index 1 to the end is the role name or role mention
-    const roleArg = interaction.args.slice(1).join(' ').trim();
+    // Match user mention (<@123456789> or <@!123456789>) at the start
+    const mentionMatch = cleanText.match(/^<@!?(\d+)>\s*(.+)$/);
+    if (mentionMatch) {
+        return {
+            targetArg: mentionMatch[1],
+            roleArg: mentionMatch[2].trim(),
+        };
+    }
 
-    return { targetArg, roleArg };
+    // Match user ID at the start
+    const idMatch = cleanText.match(/^(\d{17,20})\s*(.+)$/);
+    if (idMatch) {
+        return {
+            targetArg: idMatch[1],
+            roleArg: idMatch[2].trim(),
+        };
+    }
+
+    // Fallback: split on first space if no direct ID/mention matched
+    const spaceIdx = cleanText.indexOf(' ');
+    if (spaceIdx === -1) {
+        return { targetArg: cleanText, roleArg: null };
+    }
+
+    return {
+        targetArg: cleanText.substring(0, spaceIdx).trim(),
+        roleArg: cleanText.substring(spaceIdx + 1).trim(),
+    };
 }
 
 async function resolveTargetMember(interaction, targetArg) {
@@ -39,27 +69,25 @@ async function resolveTargetMember(interaction, targetArg) {
 }
 
 async function resolveRole(interaction, roleArg) {
-    // 1. Try slash command option
     let role = interaction.options.getRole('role');
     if (role) return role;
 
     if (!roleArg) return null;
 
-    // Fetch all roles to guarantee we aren't missing uncached roles
     const roles = await interaction.guild.roles.fetch().catch(() => null);
     if (!roles) return null;
 
-    // 2. Resolve by Role ID or clean role mention format (<@&ID>)
+    // 1. Resolve by ID or clean mention format (<@&ID>)
     const cleanId = roleArg.replace(/[<@&>]/g, '').trim();
     role = roles.get(cleanId);
     if (role) return role;
 
-    // 3. Exact name match (case-insensitive)
+    // 2. Exact case-insensitive name match
     const searchLower = roleArg.toLowerCase().trim();
     role = roles.find((r) => r.name.toLowerCase() === searchLower);
     if (role) return role;
 
-    // 4. Fallback: Partial name match
+    // 3. Fallback: Partial name match
     return roles.find((r) => r.name.toLowerCase().includes(searchLower)) || null;
 }
 
@@ -83,7 +111,7 @@ export default {
     category: 'moderation',
 
     async execute(interaction) {
-        const { targetArg, roleArg } = parseArgs(interaction);
+        const { targetArg, roleArg } = parseRawArgs(interaction);
 
         const member = await resolveTargetMember(interaction, targetArg);
         if (!member) {
