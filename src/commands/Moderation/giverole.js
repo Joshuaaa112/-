@@ -5,23 +5,17 @@ import { TitanBotError, ErrorTypes } from '../../utils/errorHandler.js';
 
 const NO_PINGS = { parse: [], roles: [], users: [] };
 
-async function parsePrefixArgs(interaction) {
-    if (!interaction.args || !interaction.args.length) return { targetArg: null, roleArg: null };
-
-    const rawInput = interaction.args.join(' ');
-    
-    // Check if the command starts with a user mention: <@ID> or <@!ID>
-    const userMentionMatch = rawInput.match(/^<@!?(\d+)>\s*(.+)$/);
-    if (userMentionMatch) {
-        return {
-            targetArg: userMentionMatch[1],
-            roleArg: userMentionMatch[2].trim(),
-        };
+function parseArgs(interaction) {
+    if (!interaction.args || !interaction.args.length) {
+        return { targetArg: null, roleArg: null };
     }
 
-    // Fallback: split on spaces if no direct mention structure is matched
+    // First argument is always the user (mention, ID, or raw text)
     const targetArg = interaction.args[0];
-    const roleArg = interaction.args.slice(1).join(' ');
+    
+    // Everything from index 1 to the end is the role name or role mention
+    const roleArg = interaction.args.slice(1).join(' ').trim();
+
     return { targetArg, roleArg };
 }
 
@@ -45,25 +39,28 @@ async function resolveTargetMember(interaction, targetArg) {
 }
 
 async function resolveRole(interaction, roleArg) {
+    // 1. Try slash command option
     let role = interaction.options.getRole('role');
     if (role) return role;
 
     if (!roleArg) return null;
 
-    // 1. Resolve by Role ID or clean role ping (<@&ID>)
+    // Fetch all roles to guarantee we aren't missing uncached roles
+    const roles = await interaction.guild.roles.fetch().catch(() => null);
+    if (!roles) return null;
+
+    // 2. Resolve by Role ID or clean role mention format (<@&ID>)
     const cleanId = roleArg.replace(/[<@&>]/g, '').trim();
-    role = interaction.guild.roles.cache.get(cleanId);
+    role = roles.get(cleanId);
     if (role) return role;
 
-    // 2. Exact name match (case-insensitive)
+    // 3. Exact name match (case-insensitive)
     const searchLower = roleArg.toLowerCase().trim();
-    const rolesCache = interaction.guild.roles.cache;
-
-    role = rolesCache.find((r) => r.name.toLowerCase() === searchLower);
+    role = roles.find((r) => r.name.toLowerCase() === searchLower);
     if (role) return role;
 
-    // 3. Fallback: Partial name match
-    return rolesCache.find((r) => r.name.toLowerCase().includes(searchLower)) || null;
+    // 4. Fallback: Partial name match
+    return roles.find((r) => r.name.toLowerCase().includes(searchLower)) || null;
 }
 
 export default {
@@ -86,7 +83,7 @@ export default {
     category: 'moderation',
 
     async execute(interaction) {
-        const { targetArg, roleArg } = await parsePrefixArgs(interaction);
+        const { targetArg, roleArg } = parseArgs(interaction);
 
         const member = await resolveTargetMember(interaction, targetArg);
         if (!member) {
