@@ -5,7 +5,27 @@ import { TitanBotError, ErrorTypes } from '../../utils/errorHandler.js';
 
 const NO_PINGS = { parse: [], roles: [], users: [] };
 
-async function resolveTargetMember(interaction) {
+async function parsePrefixArgs(interaction) {
+    if (!interaction.args || !interaction.args.length) return { targetArg: null, roleArg: null };
+
+    const rawInput = interaction.args.join(' ');
+    
+    // Check if the command starts with a user mention: <@ID> or <@!ID>
+    const userMentionMatch = rawInput.match(/^<@!?(\d+)>\s*(.+)$/);
+    if (userMentionMatch) {
+        return {
+            targetArg: userMentionMatch[1],
+            roleArg: userMentionMatch[2].trim(),
+        };
+    }
+
+    // Fallback: split on spaces if no direct mention structure is matched
+    const targetArg = interaction.args[0];
+    const roleArg = interaction.args.slice(1).join(' ');
+    return { targetArg, roleArg };
+}
+
+async function resolveTargetMember(interaction, targetArg) {
     let member = interaction.options.getMember('target');
     if (member) return member;
 
@@ -14,38 +34,35 @@ async function resolveTargetMember(interaction) {
         return await interaction.guild.members.fetch(user.id).catch(() => null);
     }
 
-    const rawArg = interaction.options.getString('target') || interaction.args?.[0];
-    if (!rawArg) return null;
+    if (!targetArg) return null;
 
-    const cleanId = rawArg.replace(/[<@!>]/g, '');
+    const cleanId = targetArg.replace(/[<@!>]/g, '');
     member = await interaction.guild.members.fetch(cleanId).catch(() => null);
     if (member) return member;
 
-    const members = await interaction.guild.members.fetch({ query: rawArg, limit: 1 }).catch(() => null);
+    const members = await interaction.guild.members.fetch({ query: targetArg, limit: 1 }).catch(() => null);
     return members?.first() || null;
 }
 
-async function resolveRole(interaction) {
+async function resolveRole(interaction, roleArg) {
     let role = interaction.options.getRole('role');
     if (role) return role;
 
-    // Grab everything after the user argument as the role name/ID
-    const rawArg = interaction.options.getString('role') || interaction.args?.slice(1).join(' ');
-    if (!rawArg) return null;
+    if (!roleArg) return null;
 
-    // 1. Try resolving by Role ID or clean role ping format
-    const cleanId = rawArg.replace(/[<@&>]/g, '').trim();
+    // 1. Resolve by Role ID or clean role ping (<@&ID>)
+    const cleanId = roleArg.replace(/[<@&>]/g, '').trim();
     role = interaction.guild.roles.cache.get(cleanId);
     if (role) return role;
 
-    // 2. Try exact name match (case-insensitive) without needing a ping
-    const searchLower = rawArg.toLowerCase().trim();
+    // 2. Exact name match (case-insensitive)
+    const searchLower = roleArg.toLowerCase().trim();
     const rolesCache = interaction.guild.roles.cache;
-    
+
     role = rolesCache.find((r) => r.name.toLowerCase() === searchLower);
     if (role) return role;
 
-    // 3. Fallback: Try partial name match (e.g. "admin" matching "Administrator")
+    // 3. Fallback: Partial name match
     return rolesCache.find((r) => r.name.toLowerCase().includes(searchLower)) || null;
 }
 
@@ -69,7 +86,9 @@ export default {
     category: 'moderation',
 
     async execute(interaction) {
-        const member = await resolveTargetMember(interaction);
+        const { targetArg, roleArg } = await parsePrefixArgs(interaction);
+
+        const member = await resolveTargetMember(interaction, targetArg);
         if (!member) {
             throw new TitanBotError(
                 'Target not found',
@@ -79,7 +98,7 @@ export default {
             );
         }
 
-        const role = await resolveRole(interaction);
+        const role = await resolveRole(interaction, roleArg);
         if (!role || role.id === interaction.guild.id) {
             throw new TitanBotError(
                 'Invalid Role',
@@ -93,7 +112,7 @@ export default {
             throw new TitanBotError(
                 'Role Hierarchy Error',
                 ErrorTypes.VALIDATION,
-                `I cannot manage **${role.name}** because it is equal to or higher than my highest role.`
+                `I cannot manage <@&${role.id}> because it is equal to or higher than my highest role.`
             );
         }
 
@@ -105,7 +124,7 @@ export default {
                 embeds: [
                     successEmbed(
                         'Role Removed',
-                        `Removed **${role.name}** from ${member.user.tag}.`
+                        `Removed <@&${role.id}> from <@${member.id}>.`
                     ),
                 ],
                 allowedMentions: NO_PINGS,
@@ -116,7 +135,7 @@ export default {
                 embeds: [
                     successEmbed(
                         'Role Added',
-                        `Successfully gave **${role.name}** to ${member.user.tag}.`
+                        `Successfully gave <@&${role.id}> to <@${member.id}>.`
                     ),
                 ],
                 allowedMentions: NO_PINGS,
