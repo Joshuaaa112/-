@@ -3,6 +3,7 @@ import { logEvent, EVENT_TYPES } from '../services/loggingService.js';
 import { logger } from '../utils/logger.js';
 import { getReactionRoleMessage, deleteReactionRoleMessage } from '../services/reactionRoleService.js';
 import { formatLogLine } from '../utils/logging/logEmbeds.js';
+import { SnipeStore } from '../services/snipe/snipeStore.js';
 
 const MAX_LOGGED_MESSAGE_CONTENT_LENGTH = 1024;
 
@@ -13,6 +14,12 @@ export default {
   async execute(message) {
     try {
       if (!message.guild) return;
+
+      try {
+        SnipeStore.recordDelete(message);
+      } catch (snipeError) {
+        logger.warn('Failed to record deleted message in SnipeStore:', snipeError);
+      }
 
       try {
         const reactionRoleData = await getReactionRoleMessage(message.client, message.guild.id, message.id);
