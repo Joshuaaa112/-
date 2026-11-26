@@ -11,7 +11,7 @@ export const botConfig = {
   // - "invisible" = appears offline
   presence: {
     // Current online state shown on Discord.
-    status: "online",
+    status: "dnd",
 
     // Activity lines shown under the bot name.
     // `type` number mapping from Discord:
@@ -24,7 +24,7 @@ export const botConfig = {
     activities: [
       {
         name: "Custom Status", // required by Discord API, not shown in the client
-        state: "stalking",     // this is what people actually see
+        state: "doing random stuff.. forced by Josh",     // this is what people actually see
         type: 4,               // Custom
       },
     ],
@@ -52,7 +52,7 @@ export const botConfig = {
 
     // Command prefix for text-based commands (e.g., "!" for "!ping").
     // Supports both slash commands and prefix commands.
-    prefix: process.env.PREFIX || "!",
+    prefix: process.env.PREFIX || ",",
   },
 
   // =========================
@@ -141,7 +141,7 @@ export const botConfig = {
     },
     footer: {
       // Default footer text used in bot embeds.
-      text: "Titan Bot",
+      text: "Real Palace Bot",
       // Footer icon URL (null = no icon).
       icon: null,
     },
