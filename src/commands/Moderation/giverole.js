@@ -5,6 +5,45 @@ import { TitanBotError, ErrorTypes } from '../../utils/errorHandler.js';
 
 const NO_PINGS = { parse: [], roles: [], users: [] };
 
+async function resolveTargetMember(interaction) {
+    let member = interaction.options.getMember('target');
+    if (member) return member;
+
+    const user = interaction.options.getUser('target');
+    if (user) {
+        return await interaction.guild.members.fetch(user.id).catch(() => null);
+    }
+
+    const rawArg = interaction.options.getString('target') || interaction.args?.[0];
+    if (!rawArg) return null;
+
+    const cleanId = rawArg.replace(/[<@!>]/g, '');
+    member = await interaction.guild.members.fetch(cleanId).catch(() => null);
+    if (member) return member;
+
+    const members = await interaction.guild.members.fetch({ query: rawArg, limit: 1 }).catch(() => null);
+    return members?.first() || null;
+}
+
+async function resolveRole(interaction) {
+    let role = interaction.options.getRole('role');
+    if (role) return role;
+
+    const rawArg = interaction.options.getString('role') || interaction.args?.slice(1).join(' ');
+    if (!rawArg) return null;
+
+    const cleanId = rawArg.replace(/[<@&>]/g, '');
+    role = interaction.guild.roles.cache.get(cleanId);
+    if (role) return role;
+
+    const searchLower = rawArg.toLowerCase().trim();
+    return interaction.guild.roles.cache.find(
+        (r) => r.name.toLowerCase() === searchLower
+    ) || interaction.guild.roles.cache.find(
+        (r) => r.name.toLowerCase().includes(searchLower)
+    ) || null;
+}
+
 export default {
     data: new SlashCommandBuilder()
         .setName('giverole')
@@ -25,24 +64,22 @@ export default {
     category: 'moderation',
 
     async execute(interaction) {
-        const targetUser = interaction.options.getUser('target');
-        const member = interaction.options.getMember('target');
-        const role = interaction.options.getRole('role');
-
+        const member = await resolveTargetMember(interaction);
         if (!member) {
             throw new TitanBotError(
                 'Target not found',
                 ErrorTypes.USER_INPUT,
-                'The target user is not currently in this server.',
+                'Could not find that user in this server.',
                 { subtype: 'user_not_found' }
             );
         }
 
+        const role = await resolveRole(interaction);
         if (!role || role.id === interaction.guild.id) {
             throw new TitanBotError(
                 'Invalid Role',
                 ErrorTypes.VALIDATION,
-                'You cannot assign or remove the @everyone role.'
+                'Could not find that role, or you tried to select @everyone.'
             );
         }
 
@@ -63,7 +100,7 @@ export default {
                 embeds: [
                     successEmbed(
                         'Role Removed',
-                        `Removed **${role.name}** from ${targetUser.tag}.`
+                        `Removed **${role.name}** from ${member.user.tag}.`
                     ),
                 ],
                 allowedMentions: NO_PINGS,
@@ -74,7 +111,7 @@ export default {
                 embeds: [
                     successEmbed(
                         'Role Added',
-                        `Successfully gave **${role.name}** to ${targetUser.tag}.`
+                        `Successfully gave **${role.name}** to ${member.user.tag}.`
                     ),
                 ],
                 allowedMentions: NO_PINGS,
