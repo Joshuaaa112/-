@@ -9,6 +9,7 @@ import { successEmbed } from '../../utils/embeds.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 
 const ROLES_PER_PAGE = 15;
+const NO_PINGS = { parse: [], roles: [], users: [] };
 
 function buildRolesPage(guild, roles, page) {
     const totalPages = Math.max(1, Math.ceil(roles.length / ROLES_PER_PAGE));
@@ -17,7 +18,7 @@ function buildRolesPage(guild, roles, page) {
     const slice = roles.slice(start, start + ROLES_PER_PAGE);
 
     const lines = slice.map(
-        (role, idx) => `\`${start + idx + 1}.\` ${role.name} (\`${role.id}\`)`
+        (role, idx) => `\`${start + idx + 1}.\` ${role} (\`${role.id}\`)`
     );
 
     const embed = successEmbed(
@@ -56,7 +57,7 @@ export default {
             return await InteractionHelper.universalReply(interaction, {
                 content: 'There are no custom roles in this server.',
                 ephemeral: true,
-                allowedMentions: { parse: [] },
+                allowedMentions: NO_PINGS,
             });
         }
 
@@ -72,7 +73,7 @@ export default {
         const reply = await InteractionHelper.universalReply(interaction, {
             embeds: [embed],
             components: totalPages > 1 ? [row] : [],
-            allowedMentions: { parse: [] },
+            allowedMentions: NO_PINGS,
         });
 
         if (totalPages <= 1 || !reply?.createMessageComponentCollector) return;
@@ -87,7 +88,7 @@ export default {
                 return btnInt.reply({
                     content: 'Only the person who ran the command can flip pages.',
                     ephemeral: true,
-                    allowedMentions: { parse: [] },
+                    allowedMentions: NO_PINGS,
                 });
             }
 
@@ -104,7 +105,7 @@ export default {
             await btnInt.update({
                 embeds: [updated.embed],
                 components: [updated.row],
-                allowedMentions: { parse: [] },
+                allowedMentions: NO_PINGS,
             });
         });
 
@@ -115,7 +116,7 @@ export default {
                 )
             );
             await reply
-                .edit({ components: [disabledRow], allowedMentions: { parse: [] } })
+                .edit({ components: [disabledRow], allowedMentions: NO_PINGS })
                 .catch(() => {});
         });
     },
