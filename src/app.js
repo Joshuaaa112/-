@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { Client, Collection, GatewayIntentBits } from 'discord.js';
+import { Client, Collection, GatewayIntentBits, Partials } from 'discord.js';
 import { REST } from '@discordjs/rest';
 import express from 'express';
 import cron from 'node-cron';
@@ -16,6 +16,7 @@ import { runSafeTask, handleTaskError, ErrorCodes } from './utils/errorHandler.j
 import { initializeMusic } from './services/music/riffySetup.js';
 import { shutdownMusic } from './services/music/playerHandler.js';
 import { handleAfkRemoval } from './commands/Utility/afk.js';
+import { reactionSnipeStore } from './services/snipe/reactionSnipeStore.js';
 import pkg from '../package.json' with { type: 'json' };
 import { EXPECTED_SCHEMA_VERSION, EXPECTED_SCHEMA_LABEL } from './config/database/schemaVersion.js';
 
@@ -31,6 +32,12 @@ class TitanBot extends Client {
         GatewayIntentBits.DirectMessages,
         GatewayIntentBits.GuildVoiceStates,             
         GatewayIntentBits.GuildBans,                    
+      ],
+      partials: [
+        Partials.Message,
+        Partials.Channel,
+        Partials.Reaction,
+        Partials.User,
       ],
     });
 
@@ -292,7 +299,7 @@ class TitanBot extends Client {
       { path: 'interactions', type: 'default', required: true }
     ];
 
-    for (const handler of handlers) {
+    for (const handler) {
       try {
         startupLog(`Loading handler: ${handler.path}`);
         const module = await import(`./handlers/loaders/${handler.path}.js`);
@@ -381,7 +388,60 @@ class TitanBot extends Client {
 try {
   const bot = new TitanBot();
   handleAfkRemoval(bot);
-  
+
+  // Hook up reaction removal tracking for ,rs
+  bot.on('messageReactionRemove', async (reaction, user) => {
+    try {
+      if (user?.bot) return;
+
+      if (reaction.partial) {
+        await reaction.fetch().catch(() => null);
+      }
+      if (reaction.message?.partial) {
+        await reaction.message.fetch().catch(() => null);
+      }
+
+      let resolvedUser = user;
+      if (resolvedUser?.partial) {
+        resolvedUser = await resolvedUser.fetch().catch(() => user);
+      }
+
+      const channel = reaction.message?.channel;
+      if (!channel?.id) return;
+
+      const message = reaction.message;
+      const contentPreview =
+        typeof message?.content === 'string' && message.content.trim().length > 0
+          ? message.content.trim().slice(0, 200)
+          : null;
+
+      let emojiDisplay = '❓';
+      if (reaction.emoji) {
+        if (reaction.emoji.id) {
+          const prefix = reaction.emoji.animated ? 'a' : '';
+          emojiDisplay = `<${prefix}:${reaction.emoji.name}:${reaction.emoji.id}>`;
+        } else {
+          emojiDisplay = reaction.emoji.name || '❓';
+        }
+      }
+
+      reactionSnipeStore.recordRemoval({
+        guildId: message?.guildId || channel.guild?.id || null,
+        channelId: channel.id,
+        messageId: message?.id || null,
+        messageUrl: message?.url || null,
+        messageContent: contentPreview,
+        messageAuthorTag: message?.author?.tag || null,
+        userId: resolvedUser?.id,
+        userTag: resolvedUser?.tag || resolvedUser?.username || null,
+        emojiDisplay,
+        removedAt: Date.now(),
+      });
+    } catch (err) {
+      logger.warn('Reaction snipe tracking warning:', err.message);
+    }
+  });
+
   const setupShutdown = () => {
     process.on('SIGTERM', () => bot.shutdown('SIGTERM'));
     process.on('SIGINT', () => bot.shutdown('SIGINT'));
