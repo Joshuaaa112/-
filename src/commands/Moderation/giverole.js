@@ -5,73 +5,57 @@ import { TitanBotError, ErrorTypes } from '../../utils/errorHandler.js';
 
 const NO_PINGS = { parse: [], roles: [], users: [] };
 
-async function getArgs(interaction) {
-    // 1. Slash command native options
-    const targetMember = interaction.options.getMember('target');
-    const targetUser = interaction.options.getUser('target');
-    const slashRole = interaction.options.getRole('role');
+async function resolveMemberAndRole(interaction) {
+    let targetMember = interaction.options.getMember('target');
+    let targetRole = interaction.options.getRole('role');
 
-    if (targetMember && slashRole) {
-        return { member: targetMember, roleArg: slashRole.id };
+    // If both slash command options are present (Slash execution)
+    if (targetMember && targetRole) {
+        return { member: targetMember, role: targetRole };
     }
 
-    // 2. Prefix command string options & raw args parsing
-    const targetOpt = interaction.options.getString('target');
-    const roleOpt = interaction.options.getString('role');
+    // Determine raw string inputs from Prefix execution
+    let rawUserStr = interaction.options.getString('target') || interaction.args?.[0];
+    let rawRoleStr = interaction.options.getString('role') || interaction.args?.slice(1).join(' ');
 
-    let targetRaw = targetOpt || interaction.args?.[0];
-    let roleRaw = roleOpt || interaction.args?.slice(1).join(' ');
-
-    // 3. Fallback: Parse raw text from message if available
     const rawContent = interaction.message?.content || interaction.content || '';
     if (rawContent && rawContent.startsWith(',')) {
-        const clean = rawContent.replace(/^,\w+\s+/, '').trim();
-        const match = clean.match(/^<@!?(\d+)>\s*(.+)$/);
-        if (match) {
-            targetRaw = match[1];
-            roleRaw = match[2];
+        const cleanContent = rawContent.replace(/^,\w+\s+/, '').trim();
+        const userMentionMatch = cleanContent.match(/^<@!?(\d+)>\s*(.+)$/);
+        if (userMentionMatch) {
+            rawUserStr = userMentionMatch[1];
+            rawRoleStr = userMentionMatch[2];
         }
     }
 
-    return { targetRaw, roleRaw, directMember: targetMember || targetUser };
-}
+    // Resolve Member
+    if (!targetMember && rawUserStr) {
+        const cleanUserId = String(rawUserStr).replace(/[<@!>]/g, '').trim();
+        targetMember = await interaction.guild.members.fetch(cleanUserId).catch(() => null);
 
-async function resolveTargetMember(interaction, directMember, targetRaw) {
-    if (directMember) {
-        const member = await interaction.guild.members.fetch(directMember.id).catch(() => null);
-        if (member) return member;
+        if (!targetMember) {
+            const members = await interaction.guild.members.fetch({ query: String(rawUserStr), limit: 1 }).catch(() => null);
+            targetMember = members?.first() || null;
+        }
     }
 
-    if (!targetRaw) return null;
+    // Resolve Role
+    if (!targetRole && rawRoleStr) {
+        const roles = await interaction.guild.roles.fetch().catch(() => null);
+        if (roles) {
+            const cleanRoleId = String(rawRoleStr).replace(/[<@&>]/g, '').trim();
+            targetRole = roles.get(cleanRoleId);
 
-    const cleanId = String(targetRaw).replace(/[<@!>]/g, '').trim();
-    let member = await interaction.guild.members.fetch(cleanId).catch(() => null);
-    if (member) return member;
+            if (!targetRole) {
+                const searchLower = String(rawRoleStr).toLowerCase().trim();
+                targetRole = roles.find((r) => r.name.toLowerCase() === searchLower)
+                    || roles.find((r) => r.name.toLowerCase().includes(searchLower))
+                    || null;
+            }
+        }
+    }
 
-    const members = await interaction.guild.members.fetch({ query: String(targetRaw), limit: 1 }).catch(() => null);
-    return members?.first() || null;
-}
-
-async function resolveRole(interaction, roleRaw) {
-    if (!roleRaw) return null;
-
-    // Fetch full role list to bypass cache misses
-    const roles = await interaction.guild.roles.fetch().catch(() => null);
-    if (!roles) return null;
-
-    const clean = String(roleRaw).replace(/[<@&>]/g, '').trim();
-    
-    // Check by ID / Mention ID
-    let role = roles.get(clean);
-    if (role) return role;
-
-    // Check exact case-insensitive name
-    const searchLower = clean.toLowerCase();
-    role = roles.find((r) => r.name.toLowerCase() === searchLower);
-    if (role) return role;
-
-    // Check partial name match
-    return roles.find((r) => r.name.toLowerCase().includes(searchLower)) || null;
+    return { member: targetMember, role: targetRole };
 }
 
 export default {
@@ -94,9 +78,8 @@ export default {
     category: 'moderation',
 
     async execute(interaction) {
-        const { targetRaw, roleRaw, directMember } = await getArgs(interaction);
+        const { member, role } = await resolveMemberAndRole(interaction);
 
-        const member = await resolveTargetMember(interaction, directMember, targetRaw);
         if (!member) {
             throw new TitanBotError(
                 'Target not found',
@@ -106,7 +89,6 @@ export default {
             );
         }
 
-        const role = await resolveRole(interaction, roleRaw);
         if (!role || role.id === interaction.guild.id) {
             throw new TitanBotError(
                 'Invalid Role',
