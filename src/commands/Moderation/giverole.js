@@ -5,81 +5,111 @@ import { TitanBotError, ErrorTypes } from '../../utils/errorHandler.js';
 
 const NO_PINGS = { parse: [], roles: [], users: [] };
 
-async function resolveMemberAndRole(interaction) {
-    let targetMember = interaction.options.getMember('target');
-    let targetRole = interaction.options.getRole('role');
-
-    // If both slash command options are present (Slash execution)
-    if (targetMember && targetRole) {
-        return { member: targetMember, role: targetRole };
-    }
-
-    // Determine raw string inputs from Prefix execution
-    let rawUserStr = interaction.options.getString('target') || interaction.args?.[0];
-    let rawRoleStr = interaction.options.getString('role') || interaction.args?.slice(1).join(' ');
-
+function extractRawInputs(interaction) {
+    // Check if interaction was created from a message string (Prefix command)
     const rawContent = interaction.message?.content || interaction.content || '';
+    
     if (rawContent && rawContent.startsWith(',')) {
+        // Remove command prefix (e.g. ",role ")
         const cleanContent = rawContent.replace(/^,\w+\s+/, '').trim();
+        
+        // Match user mention <@ID> or <@!ID> followed by whatever text is left
         const userMentionMatch = cleanContent.match(/^<@!?(\d+)>\s*(.+)$/);
         if (userMentionMatch) {
-            rawUserStr = userMentionMatch[1];
-            rawRoleStr = userMentionMatch[2];
+            return {
+                rawUser: userMentionMatch[1],
+                rawRole: userMentionMatch[2].trim(),
+            };
         }
+
+        // Match user ID at start followed by text
+        const userIdMatch = cleanContent.match(/^(\d{17,20})\s*(.+)$/);
+        if (userIdMatch) {
+            return {
+                rawUser: userIdMatch[1],
+                rawRole: userIdMatch[2].trim(),
+            };
+        }
+
+        // Split on first space if no direct mention/ID syntax matched
+        const spaceIdx = cleanContent.indexOf(' ');
+        if (spaceIdx !== -1) {
+            return {
+                rawUser: cleanContent.substring(0, spaceIdx).trim(),
+                rawRole: cleanContent.substring(spaceIdx + 1).trim(),
+            };
+        }
+
+        return { rawUser: cleanContent, rawRole: '' };
     }
 
-    // Resolve Member
-    if (!targetMember && rawUserStr) {
-        const cleanUserId = String(rawUserStr).replace(/[<@!>]/g, '').trim();
-        targetMember = await interaction.guild.members.fetch(cleanUserId).catch(() => null);
+    // Slash command or string option fallbacks
+    const rawUser = interaction.options.getString('target') || interaction.args?.[0] || '';
+    const rawRole = interaction.options.getString('role') || interaction.args?.slice(1).join(' ') || '';
 
-        if (!targetMember) {
-            const members = await interaction.guild.members.fetch({ query: String(rawUserStr), limit: 1 }).catch(() => null);
-            targetMember = members?.first() || null;
-        }
-    }
+    return { rawUser, rawRole };
+}
 
-    // Resolve Role
-    if (!targetRole && rawRoleStr) {
-        const roles = await interaction.guild.roles.fetch().catch(() => null);
-        if (roles) {
-            const cleanRoleId = String(rawRoleStr).replace(/[<@&>]/g, '').trim();
-            targetRole = roles.get(cleanRoleId);
+async function resolveMember(interaction, rawUser) {
+    if (!rawUser) return null;
 
-            if (!targetRole) {
-                const searchLower = String(rawRoleStr).toLowerCase().trim();
-                targetRole = roles.find((r) => r.name.toLowerCase() === searchLower)
-                    || roles.find((r) => r.name.toLowerCase().includes(searchLower))
-                    || null;
-            }
-        }
-    }
+    const cleanId = String(rawUser).replace(/[<@!>]/g, '').trim();
+    
+    // 1. Try fetching directly by User ID / Clean Mention ID
+    let member = await interaction.guild.members.fetch(cleanId).catch(() => null);
+    if (member) return member;
 
-    return { member: targetMember, role: targetRole };
+    // 2. Try searching by username / nickname query
+    const members = await interaction.guild.members.fetch({ query: String(rawUser), limit: 1 }).catch(() => null);
+    return members?.first() || null;
+}
+
+async function resolveRole(interaction, rawRole) {
+    if (!rawRole) return null;
+
+    // Fetch all roles to guarantee no cache misses
+    const roles = await interaction.guild.roles.fetch().catch(() => null);
+    if (!roles) return null;
+
+    const cleanId = String(rawRole).replace(/[<@&>]/g, '').trim();
+
+    // 1. Check by Role ID / Clean Mention ID
+    let role = roles.get(cleanId);
+    if (role) return role;
+
+    const searchLower = String(rawRole).toLowerCase().trim();
+
+    // 2. Check exact case-insensitive role name
+    role = roles.find((r) => r.name.toLowerCase() === searchLower);
+    if (role) return role;
+
+    // 3. Fallback: Check partial role name match
+    return roles.find((r) => r.name.toLowerCase().includes(searchLower)) || null;
 }
 
 export default {
     data: new SlashCommandBuilder()
         .setName('role')
         .setDescription('Add or remove a role on a server member')
-        .addUserOption((option) =>
+        .addStringOption((option) =>
             option
                 .setName('target')
-                .setDescription('The user to update roles for')
+                .setDescription('The user to update roles for (mention, ID, or username)')
                 .setRequired(true)
         )
-        .addRoleOption((option) =>
+        .addStringOption((option) =>
             option
                 .setName('role')
-                .setDescription('The role to give or remove (ping or text name)')
+                .setDescription('The role to give or remove (ping, ID, or text name)')
                 .setRequired(true)
         )
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles),
     category: 'moderation',
 
     async execute(interaction) {
-        const { member, role } = await resolveMemberAndRole(interaction);
+        const { rawUser, rawRole } = extractRawInputs(interaction);
 
+        const member = await resolveMember(interaction, rawUser);
         if (!member) {
             throw new TitanBotError(
                 'Target not found',
@@ -89,6 +119,7 @@ export default {
             );
         }
 
+        const role = await resolveRole(interaction, rawRole);
         if (!role || role.id === interaction.guild.id) {
             throw new TitanBotError(
                 'Invalid Role',
